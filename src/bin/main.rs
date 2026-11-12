@@ -16,6 +16,13 @@ use esp_hal::timer::timg::TimerGroup;
 use esp_radio::ble::controller::BleConnector;
 use trouble_host::prelude::*;
 use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::ledc::{
+    channel::{self, ChannelIFace},
+    timer::{self, TimerIFace},
+    LSGlobalClkSource, LowSpeed, Ledc,
+};
+use esp_hal::ledc::channel::ChannelHW;
+use esp_hal::time::Rate;
 
 #[panic_handler]
 fn panic(panic_info: &core::panic::PanicInfo) -> ! {
@@ -70,6 +77,24 @@ async fn main(spawner: Spawner) -> ! {
     info!("Embassy initialized!");
 
     let mut led = Output::new(peripherals.GPIO8, Level::Low, OutputConfig::default());
+    // Initialize the LEDC peripheral
+    let mut ledc = Ledc::new(peripherals.LEDC);
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+    let mut timer = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    timer.configure(timer::config::Config {
+        duty: timer::config::Duty::Duty14Bit,
+        clock_source: timer::LSClockSource::APBClk,
+        frequency: Rate::from_hz(50),
+    }).unwrap();
+
+    // Attach GPIO 4 to the before declared timer
+    let mut servo_pwm = ledc.channel::<LowSpeed>(channel::Number::Channel0, peripherals.GPIO4);
+    servo_pwm.configure(channel::config::Config {
+        timer: &timer,
+        duty_pct: 0,
+        drive_mode: esp_hal::gpio::DriveMode::PushPull
+    }).unwrap();
 
     let _wifi_controller =
         esp_radio::wifi::WifiController::new(peripherals.WIFI, Default::default())
@@ -86,13 +111,15 @@ async fn main(spawner: Spawner) -> ! {
     let _ = spawner;
 
     loop {
-        info!("LED on");
+        info!("Moving servo to 0 degrees, and turning on the LED");
         led.set_high();
-        Timer::after(Duration::from_millis(1_000)).await;
+        servo_pwm.set_duty_hw(819);
+        Timer::after(Duration::from_millis(5_000)).await;
 
-        info!("LED off");
+        info!("Moving servo to 180 degrees, and turning off the LED");
         led.set_low();
-        Timer::after(Duration::from_millis(1_000)).await;
+        servo_pwm.set_duty_hw(1638);
+        Timer::after(Duration::from_millis(5_000)).await;
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.2.2/examples
